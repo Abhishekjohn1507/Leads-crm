@@ -46,6 +46,11 @@ export function PackagesClient({ canCreate, canUpdate, canApply, userRole }: Pac
   const [showApplyModal, setShowApplyModal] = useState(false);
   const [applyStartDate, setApplyStartDate] = useState(new Date().toISOString().split("T")[0]);
   const [applyDueDate, setApplyDueDate] = useState("");
+  const [applyCompanyName, setApplyCompanyName] = useState("");
+  const [applyBrandName, setApplyBrandName] = useState("");
+  const [applyPhone, setApplyPhone] = useState("");
+  const [applyIndustry, setApplyIndustry] = useState("");
+  const [applyGstTaxId, setApplyGstTaxId] = useState("");
   const [applyNotes, setApplyNotes] = useState("");
   const [applySubmitting, setApplySubmitting] = useState(false);
   const [applyError, setApplyError] = useState("");
@@ -86,6 +91,11 @@ export function PackagesClient({ canCreate, canUpdate, canApply, userRole }: Pac
     setApplyPkg(pkg);
     setApplyStartDate(new Date().toISOString().split("T")[0]);
     setApplyDueDate("");
+    setApplyCompanyName("");
+    setApplyBrandName("");
+    setApplyPhone("");
+    setApplyIndustry("");
+    setApplyGstTaxId("");
     setApplyNotes("");
     setApplyError("");
     setApplySuccess(false);
@@ -106,6 +116,11 @@ export function PackagesClient({ canCreate, canUpdate, canApply, userRole }: Pac
           packageId: applyPkg.id,
           startDate: applyStartDate,
           dueDate: applyDueDate || null,
+          companyName: applyCompanyName.trim() || undefined,
+          brandName: applyBrandName.trim() || undefined,
+          phone: applyPhone.trim() || undefined,
+          industry: applyIndustry.trim() || undefined,
+          gstTaxId: applyGstTaxId.trim() || undefined,
           notes: applyNotes || undefined,
         }),
       });
@@ -575,6 +590,80 @@ export function PackagesClient({ canCreate, canUpdate, canApply, userRole }: Pac
                     <span className="font-mono text-amber-400">
                       ₹{(applyPkg.basePrice + (applyPkg.basePrice * applyPkg.taxRate) / 100).toLocaleString()}
                     </span>
+                  </div>
+                </div>
+
+                {/* Client Company & Brand Profile Details */}
+                <div className="p-3.5 bg-zinc-950/40 rounded-xl border border-zinc-800/80 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-amber-400">Business & Brand Information</span>
+                    <span className="text-[10px] text-zinc-500">Populates client profile</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-medium text-zinc-300 mb-1">
+                        Company Name
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Apex Media Labs"
+                        value={applyCompanyName}
+                        onChange={(e) => setApplyCompanyName(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-zinc-900 border border-zinc-700/80 rounded-lg text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-zinc-300 mb-1">
+                        Brand / Product Name
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Apex Boost Drink"
+                        value={applyBrandName}
+                        onChange={(e) => setApplyBrandName(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-zinc-900 border border-zinc-700/80 rounded-lg text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-medium text-zinc-300 mb-1">
+                        Contact Phone
+                      </label>
+                      <input
+                        type="tel"
+                        placeholder="+91 98765 43210"
+                        value={applyPhone}
+                        onChange={(e) => setApplyPhone(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-zinc-900 border border-zinc-700/80 rounded-lg text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-zinc-300 mb-1">
+                        Industry / Niche
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. D2C Health & Wellness"
+                        value={applyIndustry}
+                        onChange={(e) => setApplyIndustry(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-zinc-900 border border-zinc-700/80 rounded-lg text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-zinc-300 mb-1">
+                        GST / Tax ID
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="22AAAAA0000A1Z5"
+                        value={applyGstTaxId}
+                        onChange={(e) => setApplyGstTaxId(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-zinc-900 border border-zinc-700/80 rounded-lg text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
                   </div>
                 </div>
 

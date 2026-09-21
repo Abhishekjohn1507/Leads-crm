@@ -19,7 +19,7 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
     redirect("/login");
   }
 
-  const canView = hasPermission(user.role, "order:view");
+  const canView = hasPermission(user.role, "order:view") || hasPermission(user.role, "own-order:view");
   if (!canView) {
     redirect("/dashboard");
   }

@@ -143,6 +143,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | ["*"]> = {
     "lead:view",
     "lead:create",
     "lead:update",
+    "lead:assign",
     "lead:convert",
     "client:view",
     "client:create",

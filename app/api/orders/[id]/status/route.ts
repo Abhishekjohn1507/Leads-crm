@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pool } from "@/lib/db";
+import { db } from "@/lib/drizzle";
+import { orders } from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
 import { getCurrentUserWithRole, requirePermission } from "@/lib/rbac/authz";
 import { canTransitionOrderStatus } from "@/lib/orders/status";
 import { orderStatusSchema } from "@/lib/validation/module4";
@@ -26,17 +28,16 @@ export async function PATCH(
 
     const orgId = DEFAULT_ORG_ID;
 
-    // Get current order status
-    const currentRes = await pool.query(
-      "SELECT id, UPPER(status::text) as status, client_id, package_name FROM orders WHERE id = $1 AND organization_id = $2;",
-      [id, orgId]
-    );
+    // Get current order status programmatically
+    const currentOrder = await db.query.orders.findFirst({
+      where: and(eq(orders.id, id), eq(orders.organizationId, orgId)),
+    });
 
-    if (currentRes.rows.length === 0) {
+    if (!currentOrder) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
 
-    const currentStatus = currentRes.rows[0].status;
+    const currentStatus = String(currentOrder.status).toUpperCase();
     const targetStatus = validated.status.toUpperCase();
 
     // Check transition validity
@@ -48,14 +49,22 @@ export async function PATCH(
       );
     }
 
-    // Execute transition
-    const updateRes = await pool.query(
-      `UPDATE orders 
-       SET status = $1::order_status, updated_at = now() 
-       WHERE id = $2 AND organization_id = $3
-       RETURNING id, client_id as "clientId", UPPER(status::text) as "status", updated_at as "updatedAt";`,
-      [targetStatus.toLowerCase(), id, orgId]
-    );
+    // Execute transition programmatically
+    const updated = await db
+      .update(orders)
+      .set({
+        status: targetStatus.toLowerCase() as any,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(orders.id, id), eq(orders.organizationId, orgId)))
+      .returning({
+        id: orders.id,
+        clientId: orders.clientId,
+        status: orders.status,
+        updatedAt: orders.updatedAt,
+      });
+
+    const updatedRow = updated[0];
 
     // Audit log
     await logActivity({
@@ -70,7 +79,7 @@ export async function PATCH(
       },
     });
 
-    return NextResponse.json(updateRes.rows[0]);
+    return NextResponse.json(updatedRow);
   } catch (error: any) {
     console.error("PATCH /api/orders/[id]/status error:", error);
     if (error.name === "ZodError") {

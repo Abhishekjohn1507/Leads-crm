@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pool } from "@/lib/db";
+import { db } from "@/lib/drizzle";
+import { packages } from "@/lib/db/schema";
+import { eq, and, asc, desc } from "drizzle-orm";
 import { getCurrentUserWithRole, requirePermission } from "@/lib/rbac/authz";
 import { createPackageSchema } from "@/lib/validation/module4";
 import { logActivity } from "@/lib/audit/logger";
@@ -21,31 +23,27 @@ export async function GET(request: NextRequest) {
 
     const orgId = DEFAULT_ORG_ID;
 
-    const conditions = ["organization_id = $1"];
-    const values: any[] = [orgId];
+    const whereClause = activeOnly
+      ? and(eq(packages.organizationId, orgId), eq(packages.isActive, true))
+      : eq(packages.organizationId, orgId);
 
-    if (activeOnly) {
-      conditions.push("is_active = true");
-    }
+    const packageList = await db
+      .select({
+        id: packages.id,
+        name: packages.name,
+        description: packages.description,
+        videoCount: packages.videoCount,
+        basePrice: packages.basePrice,
+        taxRate: packages.taxRate,
+        isActive: packages.isActive,
+        createdAt: packages.createdAt,
+        updatedAt: packages.updatedAt,
+      })
+      .from(packages)
+      .where(whereClause)
+      .orderBy(asc(packages.basePrice), desc(packages.createdAt));
 
-    const res = await pool.query(
-      `SELECT 
-        id,
-        name,
-        description,
-        video_count as "videoCount",
-        base_price as "basePrice",
-        tax_rate as "taxRate",
-        is_active as "isActive",
-        created_at as "createdAt",
-        updated_at as "updatedAt"
-       FROM packages
-       WHERE ${conditions.join(" AND ")}
-       ORDER BY base_price ASC, created_at DESC;`,
-      values
-    );
-
-    return NextResponse.json(res.rows);
+    return NextResponse.json(packageList);
   } catch (error: any) {
     console.error("GET /api/packages error:", error);
     return NextResponse.json(
@@ -70,38 +68,20 @@ export async function POST(request: NextRequest) {
 
     const orgId = DEFAULT_ORG_ID;
 
-    const res = await pool.query(
-      `INSERT INTO packages (
-        organization_id,
-        name,
-        description,
-        video_count,
-        base_price,
-        tax_rate,
-        is_active
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING 
-        id,
-        name,
-        description,
-        video_count as "videoCount",
-        base_price as "basePrice",
-        tax_rate as "taxRate",
-        is_active as "isActive",
-        created_at as "createdAt",
-        updated_at as "updatedAt";`,
-      [
-        orgId,
-        validated.name,
-        validated.description || null,
-        validated.videoCount,
-        validated.basePrice,
-        validated.taxRate,
-        validated.isActive ?? true,
-      ]
-    );
+    const inserted = await db
+      .insert(packages)
+      .values({
+        organizationId: orgId,
+        name: validated.name,
+        description: validated.description || null,
+        videoCount: validated.videoCount,
+        basePrice: String(validated.basePrice),
+        taxRate: String(validated.taxRate),
+        isActive: validated.isActive ?? true,
+      })
+      .returning();
 
-    const createdPackage = res.rows[0];
+    const createdPackage = inserted[0];
 
     await logActivity({
       userId: user.id,

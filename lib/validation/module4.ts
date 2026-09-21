@@ -131,6 +131,13 @@ export const clientOrderApplySchema = z.object({
   startDate: z.string().optional(),
   dueDate: nullableString(),
   notes: nullableString(),
+  // Optional client profile enrichment fields captured upon ordering
+  companyName: nullableString(),
+  brandName: nullableString(),
+  phone: nullableString(),
+  whatsapp: nullableString(),
+  industry: nullableString(),
+  gstTaxId: nullableString(),
 });
 
 export const videoRequestSchema = z.object({

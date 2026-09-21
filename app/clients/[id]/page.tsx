@@ -1,11 +1,16 @@
-import { redirect, notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getCurrentUserWithRole, requirePermission, validateClientAccess } from "@/lib/rbac/authz";
-import { pool } from "@/lib/db";
+import { db } from "@/lib/drizzle";
+import { clients, orders, packages, activityLogs, employees, users } from "@/lib/db/schema";
+import { eq, and, desc, asc } from "drizzle-orm";
 import { ClientProfileClient } from "./client-profile-client";
 
+interface ClientDetailPageProps {
+  params: Promise<{ id: string }>;
+}
 
-export default async function ClientProfilePage(props: { params: Promise<{ id: string }> }) {
-  const { id } = await props.params;
+export default async function ClientDetailPage({ params }: ClientDetailPageProps) {
+  const { id } = await params;
 
   const user = await getCurrentUserWithRole();
   if (!user) {
@@ -26,99 +31,116 @@ export default async function ClientProfilePage(props: { params: Promise<{ id: s
 
   const orgId = "00000000-0000-0000-0000-000000000001";
 
-  // Fetch client details
-  const clientRes = await pool.query(
-    `SELECT 
-      c.id,
-      c.client_name as "clientName",
-      c.company_name as "companyName",
-      c.email,
-      c.phone,
-      c.whatsapp,
-      c.brand_name as "brandName",
-      c.industry,
-      c.gst_tax_id as "gstTaxId",
-      c.assigned_employee_id as "assignedEmployeeId",
-      c.source,
-      c.notes,
-      c.is_archived as "isArchived",
-      UPPER(c.status::text) as "status",
-      c.created_at as "createdAt",
-      c.updated_at as "updatedAt",
-      COALESCE(e.full_name, 'Unassigned') as "assignedEmployeeName"
-    FROM clients c
-    LEFT JOIN employees emp ON emp.id = c.assigned_employee_id
-    LEFT JOIN users e ON e.id = emp.user_id
-    WHERE c.id = $1 AND c.organization_id = $2;`,
-    [id, orgId]
-  );
+  // Fetch client details programmatically
+  const clientRecord = await db.query.clients.findFirst({
+    where: and(eq(clients.id, id), eq(clients.organizationId, orgId)),
+  });
 
-  if (clientRes.rows.length === 0) {
+  if (!clientRecord) {
     notFound();
   }
 
-  const client = clientRes.rows[0];
+  let assignedEmployeeName = "Unassigned";
+  if (clientRecord.assignedEmployeeId) {
+    const emp = await db
+      .select({ fullName: users.fullName })
+      .from(employees)
+      .innerJoin(users, eq(users.id, employees.userId))
+      .where(eq(employees.id, clientRecord.assignedEmployeeId))
+      .limit(1);
+
+    if (emp.length > 0) {
+      assignedEmployeeName = emp[0].fullName;
+    }
+  }
+
+  const client = {
+    id: clientRecord.id,
+    clientName: clientRecord.clientName,
+    companyName: clientRecord.companyName,
+    email: clientRecord.email,
+    phone: clientRecord.phone,
+    whatsapp: clientRecord.whatsapp,
+    brandName: clientRecord.brandName,
+    industry: clientRecord.industry,
+    gstTaxId: clientRecord.gstTaxId,
+    assignedEmployeeId: clientRecord.assignedEmployeeId,
+    source: clientRecord.source,
+    notes: clientRecord.notes,
+    isArchived: clientRecord.isArchived,
+    status: String(clientRecord.status).toUpperCase(),
+    createdAt: clientRecord.createdAt ? clientRecord.createdAt.toISOString() : new Date().toISOString(),
+    updatedAt: clientRecord.updatedAt ? clientRecord.updatedAt.toISOString() : new Date().toISOString(),
+    assignedEmployeeName,
+  };
 
   // Fetch orders for this client
-  const ordersRes = await pool.query(
-    `SELECT 
-      o.id,
-      COALESCE(o.package_name_snapshot, o.package_name) as "packageName",
-      o.contracted_video_count as "contractedVideoCount",
-      o.pricing,
-      o.gst_tax as "gstTax",
-      o.total_invoice_amount as "totalInvoiceAmount",
-      o.amount_received as "amountReceived",
-      o.outstanding_balance as "outstandingBalance",
-      o.start_date as "startDate",
-      o.due_date as "dueDate",
-      UPPER(o.status::text) as "status",
-      o.ordered_videos_quota as "orderedVideosQuota",
-      o.remaining_quota as "remainingQuota",
-      o.created_at as "createdAt"
-    FROM orders o
-    WHERE o.client_id = $1 AND o.organization_id = $2
-    ORDER BY o.created_at DESC;`,
-    [id, orgId]
-  );
+  const clientOrdersList = await db.query.orders.findMany({
+    where: and(eq(orders.clientId, id), eq(orders.organizationId, orgId)),
+    orderBy: [desc(orders.createdAt)],
+  });
+
+  const formattedOrders = clientOrdersList.map((o) => ({
+    id: o.id,
+    packageName: o.packageNameSnapshot || o.packageName,
+    contractedVideoCount: o.contractedVideoCount,
+    pricing: o.pricing,
+    gstTax: o.gstTax,
+    totalInvoiceAmount: o.totalInvoiceAmount,
+    amountReceived: o.amountReceived,
+    outstandingBalance: o.outstandingBalance,
+    startDate: o.startDate,
+    dueDate: o.dueDate,
+    status: String(o.status).toUpperCase(),
+    orderedVideosQuota: o.orderedVideosQuota,
+    remainingQuota: o.remainingQuota,
+    createdAt: o.createdAt ? o.createdAt.toISOString() : new Date().toISOString(),
+  }));
 
   // Fetch active packages for quick order creation
-  const pkgRes = await pool.query(
-    `SELECT 
-       id, 
-       name, 
-       video_count as "videoCount", 
-       base_price::float as "basePrice", 
-       tax_rate::float as "taxRate" 
-     FROM packages 
-     WHERE organization_id = $1 AND is_active = true 
-     ORDER BY base_price ASC;`,
-    [orgId]
-  );
+  const activePackagesList = await db
+    .select({
+      id: packages.id,
+      name: packages.name,
+      videoCount: packages.videoCount,
+      basePrice: packages.basePrice,
+      taxRate: packages.taxRate,
+    })
+    .from(packages)
+    .where(and(eq(packages.organizationId, orgId), eq(packages.isActive, true)))
+    .orderBy(asc(packages.basePrice));
+
+  const formattedPackages = activePackagesList.map((p) => ({
+    id: p.id,
+    name: p.name,
+    videoCount: p.videoCount,
+    basePrice: Number(p.basePrice),
+    taxRate: Number(p.taxRate),
+  }));
 
   // Fetch recent activity
-  const activityRes = await pool.query(
-    `SELECT 
-      a.id,
-      a.action,
-      a.entity_name as "entityName",
-      a.entity_id as "entityId",
-      a.metadata,
-      a.created_at as "createdAt"
-    FROM activity_logs a
-    WHERE a.entity_id = $1 OR (a.metadata->>'clientId' = $1::text)
-    ORDER BY a.created_at DESC
-    LIMIT 15;`,
-    [id]
-  );
+  const recentActivities = await db.query.activityLogs.findMany({
+    where: eq(activityLogs.entityId, id),
+    orderBy: [desc(activityLogs.createdAt)],
+    limit: 15,
+  });
+
+  const formattedActivity = recentActivities.map((a) => ({
+    id: a.id,
+    action: a.action,
+    entityName: a.entityName,
+    entityId: a.entityId,
+    metadata: a.metadata,
+    createdAt: a.createdAt ? a.createdAt.toISOString() : new Date().toISOString(),
+  }));
 
   return (
     <ClientProfileClient
       user={user}
       client={client}
-      orders={ordersRes.rows}
-      packages={pkgRes.rows}
-      activities={activityRes.rows}
+      orders={formattedOrders}
+      packages={formattedPackages}
+      activities={formattedActivity}
     />
   );
 }

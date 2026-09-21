@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
-import { getCurrentUserWithRole, requirePermission, validateClientAccess } from "@/lib/rbac/authz";
+import { getCurrentUserWithRole, requirePermission, validateClientAccess, hasPermission } from "@/lib/rbac/authz";
 import { updateOrderSchema } from "@/lib/validation/module4";
 import { logActivity } from "@/lib/audit/logger";
 
@@ -18,7 +18,9 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    await requirePermission("order:view");
+    if (!hasPermission(user.role, "order:view") && !hasPermission(user.role, "own-order:view")) {
+      return NextResponse.json({ error: "Forbidden: insufficient permissions" }, { status: 403 });
+    }
 
     const orgId = DEFAULT_ORG_ID;
 

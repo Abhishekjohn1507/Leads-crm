@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getCurrentUserWithRole } from "@/lib/rbac/authz";
-import { pool } from "@/lib/db";
+import { db } from "@/lib/drizzle";
+import { clients, orders } from "@/lib/db/schema";
+import { eq, desc, and } from "drizzle-orm";
 import { DashboardClient } from "./dashboard-client";
 
 export const metadata = {
@@ -21,7 +23,6 @@ export default async function DashboardPage() {
   const userWithRole = await getCurrentUserWithRole();
   const user = userWithRole || { ...session.user, role: "CLIENT" as const, clientId: null };
 
-  // Fetch operational agency metrics for the dashboard
   let stats = {
     totalClients: 0,
     activeClients: 0,
@@ -38,112 +39,108 @@ export default async function DashboardPage() {
 
   try {
     if (user.role === "CLIENT") {
-      // Client Portal Scoped Metrics (restricted to client's own orders/quota/balance)
-      const clientOrderStatsRes = await pool.query(
-        `SELECT 
-          COUNT(*) as total,
-          COUNT(*) FILTER (WHERE status::text IN ('new', 'onboarding', 'in_production', 'partially_delivered')) as active,
-          COALESCE(SUM(total_invoice_amount), 0) as total_revenue,
-          COALESCE(SUM(outstanding_balance), 0) as outstanding_balance,
-          COALESCE(SUM(contracted_video_count), 0) as total_videos,
-          COALESCE(SUM(remaining_quota), 0) as remaining_quota
-         FROM orders
-         WHERE ($1::uuid IS NULL OR client_id = $1::uuid);`,
-        [user.clientId || null]
-      );
+      // Client Portal Scoped Metrics (strictly programmatic Drizzle query)
+      if (user.clientId) {
+        const clientOrdersList = await db.query.orders.findMany({
+          where: eq(orders.clientId, user.clientId),
+          with: {
+            client: true,
+          },
+          orderBy: [desc(orders.createdAt)],
+        });
 
-      stats = {
-        totalClients: 1,
-        activeClients: 1,
-        totalOrders: parseInt(clientOrderStatsRes.rows[0]?.total || "0", 10),
-        activeOrders: parseInt(clientOrderStatsRes.rows[0]?.active || "0", 10),
-        totalCommittedRevenue: parseFloat(clientOrderStatsRes.rows[0]?.total_revenue || "0"),
-        outstandingRevenue: parseFloat(clientOrderStatsRes.rows[0]?.outstanding_balance || "0"),
-        contractedVideos: parseInt(clientOrderStatsRes.rows[0]?.total_videos || "0", 10),
-        remainingQuota: parseInt(clientOrderStatsRes.rows[0]?.remaining_quota || "0", 10),
-      };
+        const activeStatusList = ["new", "onboarding", "in_production", "partially_delivered"];
+        const activeOrders = clientOrdersList.filter((o) =>
+          activeStatusList.includes(String(o.status).toLowerCase())
+        );
 
-      // Client does not view other agency clients
+        const totalRevenue = clientOrdersList.reduce((acc, o) => acc + Number(o.totalInvoiceAmount || 0), 0);
+        const outstanding = clientOrdersList.reduce((acc, o) => acc + Number(o.outstandingBalance || 0), 0);
+        const totalVideos = clientOrdersList.reduce((acc, o) => acc + Number(o.contractedVideoCount || 0), 0);
+        const remaining = clientOrdersList.reduce((acc, o) => acc + Number(o.remainingQuota || 0), 0);
+
+        stats = {
+          totalClients: 1,
+          activeClients: 1,
+          totalOrders: clientOrdersList.length,
+          activeOrders: activeOrders.length,
+          totalCommittedRevenue: totalRevenue,
+          outstandingRevenue: outstanding,
+          contractedVideos: totalVideos,
+          remainingQuota: remaining,
+        };
+
+        recentOrders = clientOrdersList.slice(0, 5).map((o) => ({
+          id: o.id,
+          clientId: o.clientId,
+          clientName: o.client?.clientName || "Client",
+          companyName: o.client?.companyName || null,
+          packageName: o.packageNameSnapshot || o.packageName,
+          contractedVideoCount: o.contractedVideoCount,
+          totalInvoiceAmount: Number(o.totalInvoiceAmount),
+          status: String(o.status).toUpperCase(),
+          createdAt: o.createdAt ? o.createdAt.toISOString() : new Date().toISOString(),
+        }));
+      }
+
       recentClients = [];
-
-      // Only client's own orders
-      const clientOrdersRes = await pool.query(
-        `SELECT o.id, o.client_id as "clientId", c.client_name as "clientName", c.company_name as "companyName",
-                COALESCE(o.package_name_snapshot, o.package_name) as "packageName",
-                o.contracted_video_count as "contractedVideoCount",
-                o.total_invoice_amount as "totalInvoiceAmount",
-                UPPER(o.status::text) as status,
-                o.created_at as "createdAt"
-         FROM orders o
-         JOIN clients c ON c.id = o.client_id
-         WHERE ($1::uuid IS NULL OR o.client_id = $1::uuid)
-         ORDER BY o.created_at DESC
-         LIMIT 5;`,
-        [user.clientId || null]
-      );
-      recentOrders = clientOrdersRes.rows;
     } else {
-      // Internal Agency Metrics (OWNER, ADMIN, SALES, etc.)
-      const clientStatsRes = await pool.query(
-        `SELECT 
-          COUNT(*) as total,
-          COUNT(*) FILTER (WHERE status::text = 'active') as active
-         FROM clients
-         WHERE organization_id = $1 AND is_archived = false;`,
-        [DEFAULT_ORG_ID]
-      );
+      // Internal Agency Metrics (programmatic Drizzle queries)
+      const allAgencyClients = await db.query.clients.findMany({
+        where: and(eq(clients.organizationId, DEFAULT_ORG_ID), eq(clients.isArchived, false)),
+        orderBy: [desc(clients.createdAt)],
+      });
 
-      const orderStatsRes = await pool.query(
-        `SELECT 
-          COUNT(*) as total,
-          COUNT(*) FILTER (WHERE status::text IN ('new', 'onboarding', 'in_production', 'partially_delivered')) as active,
-          COALESCE(SUM(total_invoice_amount), 0) as total_revenue,
-          COALESCE(SUM(outstanding_balance), 0) as outstanding_balance,
-          COALESCE(SUM(contracted_video_count), 0) as total_videos,
-          COALESCE(SUM(remaining_quota), 0) as remaining_quota
-         FROM orders
-         WHERE organization_id = $1;`,
-        [DEFAULT_ORG_ID]
-      );
+      const allAgencyOrders = await db.query.orders.findMany({
+        where: eq(orders.organizationId, DEFAULT_ORG_ID),
+        with: {
+          client: true,
+        },
+        orderBy: [desc(orders.createdAt)],
+      });
+
+      const activeStatusList = ["new", "onboarding", "in_production", "partially_delivered"];
+      const activeClientsCount = allAgencyClients.filter((c) => String(c.status).toLowerCase() === "active").length;
+      const activeOrdersCount = allAgencyOrders.filter((o) =>
+        activeStatusList.includes(String(o.status).toLowerCase())
+      ).length;
+
+      const totalRevenue = allAgencyOrders.reduce((acc, o) => acc + Number(o.totalInvoiceAmount || 0), 0);
+      const outstanding = allAgencyOrders.reduce((acc, o) => acc + Number(o.outstandingBalance || 0), 0);
+      const totalVideos = allAgencyOrders.reduce((acc, o) => acc + Number(o.contractedVideoCount || 0), 0);
+      const remaining = allAgencyOrders.reduce((acc, o) => acc + Number(o.remainingQuota || 0), 0);
 
       stats = {
-        totalClients: parseInt(clientStatsRes.rows[0]?.total || "0", 10),
-        activeClients: parseInt(clientStatsRes.rows[0]?.active || "0", 10),
-        totalOrders: parseInt(orderStatsRes.rows[0]?.total || "0", 10),
-        activeOrders: parseInt(orderStatsRes.rows[0]?.active || "0", 10),
-        totalCommittedRevenue: parseFloat(orderStatsRes.rows[0]?.total_revenue || "0"),
-        outstandingRevenue: parseFloat(orderStatsRes.rows[0]?.outstanding_balance || "0"),
-        contractedVideos: parseInt(orderStatsRes.rows[0]?.total_videos || "0", 10),
-        remainingQuota: parseInt(orderStatsRes.rows[0]?.remaining_quota || "0", 10),
+        totalClients: allAgencyClients.length,
+        activeClients: activeClientsCount,
+        totalOrders: allAgencyOrders.length,
+        activeOrders: activeOrdersCount,
+        totalCommittedRevenue: totalRevenue,
+        outstandingRevenue: outstanding,
+        contractedVideos: totalVideos,
+        remainingQuota: remaining,
       };
 
-      // Recent Clients
-      const recentClientsRes = await pool.query(
-        `SELECT id, client_name as "clientName", company_name as "companyName", email, UPPER(status::text) as status, created_at as "createdAt"
-         FROM clients
-         WHERE organization_id = $1 AND is_archived = false
-         ORDER BY created_at DESC
-         LIMIT 5;`,
-        [DEFAULT_ORG_ID]
-      );
-      recentClients = recentClientsRes.rows;
+      recentClients = allAgencyClients.slice(0, 5).map((c) => ({
+        id: c.id,
+        clientName: c.clientName,
+        companyName: c.companyName,
+        email: c.email,
+        status: String(c.status).toUpperCase(),
+        createdAt: c.createdAt ? c.createdAt.toISOString() : new Date().toISOString(),
+      }));
 
-      // Recent Orders
-      const recentOrdersRes = await pool.query(
-        `SELECT o.id, o.client_id as "clientId", c.client_name as "clientName", c.company_name as "companyName",
-                COALESCE(o.package_name_snapshot, o.package_name) as "packageName",
-                o.contracted_video_count as "contractedVideoCount",
-                o.total_invoice_amount as "totalInvoiceAmount",
-                UPPER(o.status::text) as status,
-                o.created_at as "createdAt"
-         FROM orders o
-         JOIN clients c ON c.id = o.client_id
-         WHERE o.organization_id = $1
-         ORDER BY o.created_at DESC
-         LIMIT 5;`,
-        [DEFAULT_ORG_ID]
-      );
-      recentOrders = recentOrdersRes.rows;
+      recentOrders = allAgencyOrders.slice(0, 5).map((o) => ({
+        id: o.id,
+        clientId: o.clientId,
+        clientName: o.client?.clientName || "Client",
+        companyName: o.client?.companyName || null,
+        packageName: o.packageNameSnapshot || o.packageName,
+        contractedVideoCount: o.contractedVideoCount,
+        totalInvoiceAmount: Number(o.totalInvoiceAmount),
+        status: String(o.status).toUpperCase(),
+        createdAt: o.createdAt ? o.createdAt.toISOString() : new Date().toISOString(),
+      }));
     }
   } catch (error) {
     console.error("Failed to load dashboard metrics:", error);

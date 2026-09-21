@@ -297,18 +297,24 @@ export function RolesSettingsClient({
                       {u.clientId ? u.clientId : "None (Internal)"}
                     </td>
                     <td className="py-3 px-3">
-                      <select
-                        disabled={updatingUserId === u.id}
-                        value={u.role}
-                        onChange={(e) => handleRoleChange(u.id, e.target.value as Role)}
-                        className="bg-[#1A1A1E] border border-zinc-700 rounded-lg px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-amber-500 cursor-pointer disabled:opacity-50"
-                      >
-                        {ROLES.map((r) => (
-                          <option key={r} value={r}>
-                            {r}
-                          </option>
-                        ))}
-                      </select>
+                      {u.role === "OWNER" && currentUser.role !== "OWNER" ? (
+                        <span className="text-[11px] text-zinc-500 italic flex items-center gap-1">
+                          <Lock className="w-3 h-3 text-amber-500" /> Protected (Owner)
+                        </span>
+                      ) : (
+                        <select
+                          disabled={updatingUserId === u.id}
+                          value={u.role}
+                          onChange={(e) => handleRoleChange(u.id, e.target.value as Role)}
+                          className="bg-[#1A1A1E] border border-zinc-700 rounded-lg px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-amber-500 cursor-pointer disabled:opacity-50"
+                        >
+                          {ROLES.map((r) => (
+                            <option key={r} value={r}>
+                              {r}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                       {updatingUserId === u.id && (
                         <span className="ml-2 text-zinc-400 animate-pulse text-[10px]">
                           Updating...

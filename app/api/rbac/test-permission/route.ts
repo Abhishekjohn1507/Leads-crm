@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getCurrentUserWithRole, requirePermission, validateClientAccess, UserWithRole } from "@/lib/rbac/authz";
 import { Permission, Role, ROLE_PERMISSIONS, ROLES } from "@/lib/rbac/permissions";
+import { db } from "@/lib/drizzle";
+import { authUser } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { pool } from "@/lib/db";
 
 // GET /api/rbac/test-permission?permission=lead:create&targetClientId=...
@@ -104,16 +107,35 @@ export async function POST(request: Request) {
       );
     }
 
-    const prevRes = await pool.query('SELECT role FROM "user" WHERE id = $1;', [targetUserId]);
-    const oldRole = prevRes.rows[0]?.role || null;
+    const targetUsers = await db
+      .select({ role: authUser.role })
+      .from(authUser)
+      .where(eq(authUser.id, targetUserId))
+      .limit(1);
 
-    await pool.query('UPDATE "user" SET role = $1 WHERE id = $2;', [newRole, targetUserId]);
+    if (targetUsers.length === 0) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+    const oldRole = targetUsers[0].role || null;
+
+    // Security Rule: Admin or non-owners CANNOT modify the OWNER's role or demote the OWNER
+    if (oldRole === "OWNER" && user.role !== "OWNER") {
+      return NextResponse.json(
+        { error: "Forbidden: Administrators cannot modify or demote the system OWNER." },
+        { status: 403 }
+      );
+    }
+
+    await db
+      .update(authUser)
+      .set({ role: newRole })
+      .where(eq(authUser.id, targetUserId));
 
     // Audit log
     await pool.query(
       'INSERT INTO role_audit_logs (target_user_id, changed_by_user_id, old_role, new_role) VALUES ($1, $2, $3, $4);',
       [targetUserId, user.id, oldRole, newRole]
-    );
+    ).catch(() => {});
 
     return NextResponse.json({
       success: true,

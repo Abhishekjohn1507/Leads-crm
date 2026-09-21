@@ -64,6 +64,13 @@ export default function RegisterPage() {
         return;
       }
 
+      // Ensure client profile is immediately provisioned in clients table
+      try {
+        await fetch("/api/auth/sync-client", { method: "POST" });
+      } catch (syncErr) {
+        console.warn("Client sync fallback:", syncErr);
+      }
+
       setSuccess(true);
       // Brief timeout to show success state before redirecting to dashboard or login
       setTimeout(() => {
